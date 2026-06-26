@@ -1,0 +1,19 @@
+name: heart-disease-mlproject
+
+conda_env: conda.yaml
+
+entry_points:
+  main:
+    parameters:
+      n_estimators: {type: str, default: "100"}
+      max_depth: {type: str, default: "10"}
+      min_samples_split: {type: str, default: "3"}
+      min_samples_leaf: {type: str, default: "2"}
+      max_features: {type: str, default: "sqrt"}
+    command: >
+      python modelling.py
+      --n_estimators {n_estimators}
+      --max_depth {max_depth}
+      --min_samples_split {min_samples_split}
+      --min_samples_leaf {min_samples_leaf}
+      --max_features {max_features}

@@ -1,0 +1,122 @@
+name: MLflow Project CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (pip)
+        run: |
+          python -m pip install --upgrade pip
+          pip install mlflow==2.18.0 pandas==2.2.3 numpy==1.26.4 scikit-learn==1.5.2 matplotlib==3.10.0 seaborn==0.13.2 joblib==1.4.2
+
+      - name: Create Python symlink
+        run: sudo ln -s $(which python3) /usr/bin/python
+
+      - name: Run MLflow Project (training)
+        working-directory: MLProject
+        env:
+          MLFLOW_TRACKING_URI: "file://${{ github.workspace }}/MLProject/mlruns"
+          MLFLOW_ALLOW_FILE_STORE: "true"
+        run: |
+          rm -rf mlruns
+          mkdir -p mlruns
+          mlflow run . --experiment-name heart-disease-ci --env-manager=local -P n_estimators=100 -P max_depth=10 -P min_samples_split=3 -P min_samples_leaf=2 -P max_features=sqrt
+
+      - name: Upload artifacts to GitHub (Skilled)
+        uses: actions/upload-artifact@v5
+        with:
+          name: mlflow-artifacts
+          path: |
+            MLProject/artifacts/
+            MLProject/mlruns/
+          retention-days: 7
+        continue-on-error: true
+
+      - name: Find and copy best model
+        working-directory: MLProject
+        run: |
+          latest_model=$(find mlruns -name "MLmodel" -path "*/models/*" -exec dirname {} \; 2>/dev/null | sort | tail -1)
+          echo "Latest model dir: $latest_model"
+          mkdir -p ../model_output
+          if [ -n "$latest_model" ] && [ -d "$latest_model" ]; then
+            cp -r "$latest_model" ../model_output/model
+            echo "Model copied to model_output/"
+            ls -la ../model_output/model/
+          else
+            echo "WARNING: No model artifact found"
+          fi
+        continue-on-error: true
+
+      - name: Attach model to release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: model-latest
+          name: "Heart Disease Model (Latest)"
+          generate_release_notes: true
+          files: |
+            model_output/model/model.pkl
+            model_output/model/MLmodel
+            model_output/model/conda.yaml
+        continue-on-error: true
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: train
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Check Docker Hub credentials
+        id: docker-auth
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Docker Hub credentials not configured, skipping docker build"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Login to Docker Hub
+        if: steps.docker-auth.outputs.skip == 'false'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & Push Docker image (Advance)
+        if: steps.docker-auth.outputs.skip == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          dockerfile: ./MLProject/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-model:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-model:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+        continue-on-error: true
