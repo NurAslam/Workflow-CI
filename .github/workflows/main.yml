@@ -50,17 +50,17 @@ jobs:
       - name: Find and copy best model
         working-directory: MLProject
         run: |
-          latest_model=$(find mlruns -name "MLmodel" -path "*/models/*" -exec dirname {} \; 2>/dev/null | sort | tail -1)
-          echo "Latest model dir: $latest_model"
-          mkdir -p ../model_output
-          if [ -n "$latest_model" ] && [ -d "$latest_model" ]; then
-            cp -r "$latest_model" ../model_output/model
-            echo "Model copied to model_output/"
+          latest_artifact=$(find mlruns -name "MLmodel" -path "*/models/*" 2>/dev/null | xargs -I {} dirname {} | sort | tail -1)
+          echo "Latest model artifact dir: $latest_artifact"
+          mkdir -p ../model_output/model
+          if [ -n "$latest_artifact" ] && [ -d "$latest_artifact" ]; then
+            cp -r "$latest_artifact"/. ../model_output/model/
+            echo "Model copied to model_output/model/"
             ls -la ../model_output/model/
           else
             echo "WARNING: No model artifact found"
+            exit 1
           fi
-        continue-on-error: true
 
       - name: Attach model to release
         if: github.ref == 'refs/heads/main'
